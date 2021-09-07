@@ -5,6 +5,8 @@ Most are Interfaces to OpenFermion
 from tequila.circuit.circuit import QCircuit
 from tequila.circuit.gates import X
 from tequila.hamiltonian.qubit_hamiltonian import QubitHamiltonian
+from math import floor
+import re
 import openfermion
 
 def known_encodings():
@@ -53,11 +55,14 @@ class EncodingBase:
         else:
             op = fermion_operator
 
+
         fop = self.do_transform(fermion_operator=op, *args, **kwargs)
-        fop.compress()
+        fop.compress()       
+
         return self.post_processing(QubitHamiltonian.from_openfermion(fop))
 
     def post_processing(self, op, *args, **kwargs):
+        #print("op: ", op)
         return op
 
     def up(self, i):
@@ -194,14 +199,74 @@ class TaperedBravyKitaev(EncodingBase):
         else:
             self.active_orbitals = active_orbitals
 
-        if "up_then_down" in kwargs:
-            raise Exception("Don't pass up_then_down argument to {}, it can't be changed".format(type(self).__name__))
-        super().__init__(n_orbitals=n_orbitals, n_electrons=n_electrons, up_then_down=False, *args, **kwargs)
+        #if "up_then_down" in kwargs:
+        #    raise Exception("Don't pass up_then_down argument to {}, it can't be changed".format(type(self).__name__))
+        super().__init__(n_orbitals=n_orbitals, n_electrons=n_electrons, up_then_down=True, *args, **kwargs)
 
     def do_transform(self, fermion_operator:openfermion.FermionOperator, *args, **kwargs) -> openfermion.QubitOperator:
-        if openfermion.count_qubits(fermion_operator) != self.n_orbitals*2:
-            raise Exception("TaperedBravyiKitaev not ready for UCC generators yet")
-        return openfermion.symmetry_conserving_bravyi_kitaev(fermion_operator, active_orbitals=self.active_orbitals, active_fermions=self.active_fermions)
+        n_qubits = openfermion.count_qubits(fermion_operator)
+        #print("Number orbital * 2: ", self.n_orbitals * 2)
+        #print("Number qubits fermion operator: ", n_qubits)
+        if n_qubits != self.n_orbitals*2:
+            #print("My code: ")
+            fop = openfermion.bravyi_kitaev_tree(fermion_operator)
+            #print("fop: ", fop)
+            n_qubits = openfermion.count_qubits(fop)
+            last_qubit = n_qubits - 1
+            mid_qubit = floor(n_qubits/2 -1)
+            #print("Last qubit: ", last_qubit)
+            #print("Mid qubit: ", mid_qubit)
+
+            fop_list = list(fop.get_operators())
+            newFop = 0 * openfermion.QubitOperator('')
+            for i in fop_list:
+                operator = str(i)
+                operator = operator.split(" [")
+                operator[1] = operator[1][:-1] + " "
+
+                searched1 = "X" + str(last_qubit) + " |Y" + str(last_qubit) + " |"
+                searched2 = "X" + str(mid_qubit) + " |Y" + str(mid_qubit) + " "
+                searched = searched1 + searched2
+
+                #If we found any continue as the constant would be zero
+                if(re.search(searched, operator[1]) != None): 
+                    continue
+
+                if(operator[1].find("Z" + str(mid_qubit) + " ") != -1): 
+                    change_sign = -1
+                else:
+                    change_sign = 1
+
+                searched = "Z" + str(last_qubit) + " |Z" + str(mid_qubit)
+                operator[1] = re.sub(searched ,"", operator[1])
+                
+                newFop += change_sign * complex(operator[0]) * openfermion.QubitOperator(operator[1])
+        
+            #print("newFop: ", newFop)
+            return newFop
+
+        else:
+            return openfermion.symmetry_conserving_bravyi_kitaev(fermion_operator, active_orbitals=self.active_orbitals, active_fermions=self.active_fermions)
+        #if openfermion.count_qubits(fermion_operator) != self.n_orbitals*2:
+        #    raise Exception("TaperedBravyiKitaev not ready for UCC generators yet")
+        #return openfermion.symmetry_conserving_bravyi_kitaev(fermion_operator, active_orbitals=self.active_orbitals, active_fermions=self.active_fermions)
+
+    def post_processing(self, op, *args, **kwargs):
+        #print("Post process op: ", op)
+        list_qubits_map = list()
+        for i in range(op.n_qubits):
+            list_qubits_map.append((op.qubits[i], i))
+        #for i in range(floor(num_qubits/2)-1):
+        #    list_qubits_map.append((i,i))
+        #for i in range(floor(num_qubits/2)-1, num_qubits-1):
+        #    list_qubits_map.append((i+1,i))
+        #print(list_qubits_map)
+        op =  op.map_qubits(dict(list_qubits_map))
+        #print("Last op: ", op)
+
+        if op is None:
+            return openfermion.QubitOperator.identity
+        return op
 
     def map_state(self, state:list, *args, **kwargs):
         non_tapered_trafo = BravyiKitaevTree(up_then_down=True, n_electrons=self.n_electrons, n_orbitals=self.n_orbitals)
@@ -210,5 +275,3 @@ class TaperedBravyKitaev(EncodingBase):
         active_qubits = [i for i in range(n_qubits) if i not in [n_qubits - 1, n_qubits // 2 - 1]]
         key = [key[i] for i in active_qubits]
         return key
-
-
