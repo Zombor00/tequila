@@ -51,18 +51,16 @@ class EncodingBase:
             The openfermion QubitOperator of this class ecoding
         """
         if self.up_then_down:
-            op = openfermion.reorder(operator=fermion_operator, order_function=openfermion.up_then_down, num_modes=2*self.n_orbitals)
+            op = openfermion.reorder(operator=fermion_operator, order_function=openfermion.up_then_down)#, num_modes=2*self.n_orbitals)
         else:
             op = fermion_operator
 
-
-        fop = self.do_transform(fermion_operator=op, *args, **kwargs)
-        fop.compress()       
+        fop = self.do_transform(fermion_operator = op, *args, **kwargs)
+        fop.compress()      
 
         return self.post_processing(QubitHamiltonian.from_openfermion(fop))
 
     def post_processing(self, op, *args, **kwargs):
-        #print("op: ", op)
         return op
 
     def up(self, i):
@@ -207,46 +205,52 @@ class TaperedBravyKitaev(EncodingBase):
         n_qubits = openfermion.count_qubits(fermion_operator)
         #print("Number orbital * 2: ", self.n_orbitals * 2)
         #print("Number qubits fermion operator: ", n_qubits)
-        if n_qubits != self.n_orbitals*2:
-            #print("My code: ")
-            fop = openfermion.bravyi_kitaev_tree(fermion_operator)
-            #print("fop: ", fop)
-            n_qubits = openfermion.count_qubits(fop)
-            last_qubit = n_qubits - 1
-            mid_qubit = floor(n_qubits/2 -1)
-            #print("Last qubit: ", last_qubit)
-            #print("Mid qubit: ", mid_qubit)
+        qop = openfermion.bravyi_kitaev_tree(fermion_operator)
+        #print("qop: ", qop)
+        n_qubits = openfermion.count_qubits(qop)
+        last_qubit = n_qubits - 1
+        mid_qubit = floor(n_qubits/2 -1)
+        #print("Last qubit: ", last_qubit)
+        #print("Mid qubit: ", mid_qubit)
 
-            fop_list = list(fop.get_operators())
-            newFop = 0 * openfermion.QubitOperator('')
-            for i in fop_list:
-                operator = str(i)
-                operator = operator.split(" [")
-                operator[1] = operator[1][:-1] + " "
+        #print("Terms: ", qop.terms)
+        terms = qop.terms.items()
 
-                searched1 = "X" + str(last_qubit) + " |Y" + str(last_qubit) + " |"
-                searched2 = "X" + str(mid_qubit) + " |Y" + str(mid_qubit) + " "
-                searched = searched1 + searched2
-
-                #If we found any continue as the constant would be zero
-                if(re.search(searched, operator[1]) != None): 
-                    continue
-
-                if(operator[1].find("Z" + str(mid_qubit) + " ") != -1): 
-                    change_sign = -1
+        newTerms = dict()
+        for i in terms:
+            key = i[0]
+            value = i[1]
+            new_tuple = []
+            for elem in key:
+                if(elem[0] == mid_qubit):
+                    if(elem[1] == 'X' or elem[1] == 'Y'):
+                        new_tuple = None
+                        break
+                    else:
+                        value *= -1
+                        continue
+                elif(elem[0] == last_qubit):
+                    if(elem[1] == 'X' or elem[1] == 'Y'):
+                        new_tuple = None
+                        break
+                    else:
+                        continue
                 else:
-                    change_sign = 1
+                    new_tuple.append(elem)
+            if(new_tuple != None):
+                new_tuple = tuple(new_tuple)
+                if new_tuple not in newTerms:
+                    newTerms[new_tuple] = value
+                else:
+                    newTerms[new_tuple] += value
 
-                searched = "Z" + str(last_qubit) + " |Z" + str(mid_qubit)
-                operator[1] = re.sub(searched ,"", operator[1])
-                
-                newFop += change_sign * complex(operator[0]) * openfermion.QubitOperator(operator[1])
-        
-            #print("newFop: ", newFop)
-            return newFop
+        #print("newTerms: ", newTerms)
 
-        else:
-            return openfermion.symmetry_conserving_bravyi_kitaev(fermion_operator, active_orbitals=self.active_orbitals, active_fermions=self.active_fermions)
+        qop.terms = newTerms
+        return qop
+
+        #else:
+        #    return openfermion.symmetry_conserving_bravyi_kitaev(fermion_operator, active_orbitals=self.active_orbitals, active_fermions=self.active_fermions)
         #if openfermion.count_qubits(fermion_operator) != self.n_orbitals*2:
         #    raise Exception("TaperedBravyiKitaev not ready for UCC generators yet")
         #return openfermion.symmetry_conserving_bravyi_kitaev(fermion_operator, active_orbitals=self.active_orbitals, active_fermions=self.active_fermions)

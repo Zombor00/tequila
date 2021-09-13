@@ -48,6 +48,14 @@ def test_base(trafo):
         assert numpy.isclose(eigvals[-1], 7.10921141e-01)
         assert len(eigvals) == 16
 
+@pytest.mark.parametrize("trafo", ["JordanWigner", "BravyiKitaev", "BravyiKitaevTree", "TaperedBravyiKitaev"])
+def test_generators(trafo):
+    mol = tq.Molecule(geometry="He 0.0 0.0 0.0", basis_set="cc-pVDZ", transformation=trafo)
+    H = mol.make_hamiltonian()
+    E = tq.ExpectationValue(H=H, U=mol.prepare_reference()+mol.make_excitation_gate([(0,8)], angle=1.0))
+    sim = tq.simulate(E)
+    assert numpy.isclose(sim, -2.2436689e+00)
+
 
 @pytest.mark.skipif(condition=not HAS_PSI4, reason="you don't have psi4")
 @pytest.mark.parametrize("trafo_args", [{"transformation": "JordanWigner"}, {"transformation": "BravyiKitaev"},
